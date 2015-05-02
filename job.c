@@ -10,6 +10,8 @@
 #include <time.h>
 #include "job.h"
 
+#define DEBUG
+
 int jobid=0;
 int siginfo=1;
 int fifo;
@@ -28,7 +30,7 @@ void scheduler()
 	if((count=read(fifo,&cmd,DATALEN))<0)
 		error_sys("read fifo failed");
 #ifdef DEBUG
-
+	printf("Reading whether other process send command!\n");
 	if(count){
 		printf("cmd cmdtype\t%d\ncmd defpri\t%d\ncmd data\t%s\n",cmd.type,cmd.defpri,cmd.data);
 	}
@@ -37,25 +39,43 @@ void scheduler()
 #endif
 
 	/* 更新等待队列中的作业 */
+	#ifdef DEBUG
+		printf("Update jobs in wait queue!\n");
+	#endif
 	updateall();
 
 	switch(cmd.type){
 	case ENQ:
+		#ifdef DEBUG
+			printf("Excute enq!\n");
+		#endif
 		do_enq(newjob,cmd);
 		break;
 	case DEQ:
+		#ifdef DEBUG
+			printf("Excute deq!\n");
+		#endif
 		do_deq(cmd);
 		break;
 	case STAT:
+		#ifdef DEBUG
+			printf("Excute stat!\n");
+		#endif
 		do_stat(cmd);
 		break;
 	default:
 		break;
 	}
 
+	#ifdef DEBUG
+		printf("Select which jobs to run next!\n");
+	#endif
 	/* 选择高优先级作业 */
 	next=jobselect();
 	/* 作业切换 */
+	#ifdef DEBUG
+		printf("Switch to the next job!\n");
+	#endif
 	jobswitch();
 }
 
@@ -98,7 +118,7 @@ struct waitqueue* jobselect()
 				highest = p->job->curpri;
 			}
 			selectprev->next = select->next;
-			if (select == selectprev)
+			if (select == selectprev)	//证明等待队列中只有一个元素
 				head = NULL;
 	}
 	return select;
@@ -167,22 +187,25 @@ void sig_handler(int sig,siginfo_t *info,void *notused)
 	int ret;
 
 	switch (sig) {
-case SIGVTALRM: /* 到达计时器所设置的计时间隔 */
-	scheduler();
-	return;
-case SIGCHLD: /* 子进程结束时传送给父进程的信号 */
-	ret = waitpid(-1,&status,WNOHANG);
-	if (ret == 0)
+	case SIGVTALRM: /* 到达计时器所设置的计时间隔 */
+		scheduler();
+		#ifdef DEBUG
+			printf("SIGVTALRM RECEIVED!\n");
+		#endif
 		return;
-	if(WIFEXITED(status)){
-		current->job->state = DONE;
-		printf("normal termation, exit status = %d\n",WEXITSTATUS(status));
-	}else if (WIFSIGNALED(status)){
-		printf("abnormal termation, signal number = %d\n",WTERMSIG(status));
-	}else if (WIFSTOPPED(status)){
-		printf("child stopped, signal number = %d\n",WSTOPSIG(status));
-	}
-	return;
+	case SIGCHLD: /* 子进程结束时传送给父进程的信号 */
+		ret = waitpid(-1,&status,WNOHANG);
+		if (ret == 0)
+			return;
+		if(WIFEXITED(status)){
+			current->job->state = DONE;
+			printf("normal termation, exit status = %d\n",WEXITSTATUS(status));
+		}else if (WIFSIGNALED(status)){
+			printf("abnormal termation, signal number = %d\n",WTERMSIG(status));
+		}else if (WIFSTOPPED(status)){
+			printf("child stopped, signal number = %d\n",WSTOPSIG(status));
+		}
+		return;
 	default:
 		return;
 	}
@@ -370,6 +393,10 @@ int main()
 	struct itimerval new,old;
 	struct stat statbuf;
 	struct sigaction newact,oldact1,oldact2;
+
+	#ifdef DEBUG
+		printf("DEBUG IS OPEN!\n");
+	#endif
 
 	if(stat("/tmp/server",&statbuf)==0){
 		/* 如果FIFO文件存在,删掉 */
