@@ -291,6 +291,10 @@ void sig_handler(int sig,siginfo_t *info,void *notused)
 {
 	int status;
 	int ret;
+#ifdef DEBUG_LJL_TASK10
+	char timebuf[BUFLEN];
+	struct waitqueue *p = NULL;
+#endif
 
 	switch (sig) {
 		case SIGVTALRM: /* 到达计时器所设置的计时间隔 */
@@ -306,6 +310,60 @@ void sig_handler(int sig,siginfo_t *info,void *notused)
 				//子进程正常退出了
 				current->job->state = DONE;
 				printf("normal termation, exit status = %d\n",WEXITSTATUS(status));
+				//任务十
+				#ifdef DEBUG_LJL_TASK10
+					//当前进程信息
+					printf("Current:\n");
+					if(current){
+						printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+						strcpy(timebuf,ctime(&(current->job->create_time)));
+						timebuf[strlen(timebuf)-1]='\0';
+						printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+							current->job->jid,
+							current->job->pid,
+							current->job->ownerid,
+							current->job->run_time,
+							current->job->wait_time,
+							timebuf,"RUNNING");
+					}else{
+						printf("NULL\n");
+					}
+
+					//当前等待队列信息
+					printf("Waitqueue:\n");
+					if(head){
+						printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+						for(p=head;p!=NULL;p=p->next){
+							strcpy(timebuf,ctime(&(p->job->create_time)));
+							timebuf[strlen(timebuf)-1]='\0';
+							printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+								p->job->jid,
+								p->job->pid,
+								p->job->ownerid,
+								p->job->run_time,
+								p->job->wait_time,
+								timebuf,
+								"READY");
+						}
+					}else if(next){
+						printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+						p = next;
+						strcpy(timebuf,ctime(&(p->job->create_time)));
+						timebuf[strlen(timebuf)-1]='\0';
+						printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+							p->job->jid,
+							p->job->pid,
+							p->job->ownerid,
+							p->job->run_time,
+							p->job->wait_time,
+							timebuf,
+							"READY");
+					}else{
+						printf("NULL\n");
+					}
+
+				#endif
+
 			//WIFSIGNALED(int status):如果子进程是因为信号而结束则此宏值为真
 			//WTERMSIG(status)：当WIFSIGNALED为真时，可以用这个宏来取得取得子进程因信号而中止的信号代码
 			}else if (WIFSIGNALED(status)){
