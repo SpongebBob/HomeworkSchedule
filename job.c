@@ -149,6 +149,7 @@ void jobswitch()
 	//当前等待队列信息
 	printf("Before jobswitch, waitqueue:\n");
 	if(head){
+		printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
 		for(p=head;p!=NULL;p=p->next){
 			strcpy(timebuf,ctime(&(p->job->create_time)));
 			timebuf[strlen(timebuf)-1]='\0';
@@ -161,6 +162,19 @@ void jobswitch()
 				timebuf,
 				"READY");
 		}
+	}else if(next){
+		printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+		p = next;
+		strcpy(timebuf,ctime(&(p->job->create_time)));
+		timebuf[strlen(timebuf)-1]='\0';
+		printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+			p->job->jid,
+			p->job->pid,
+			p->job->ownerid,
+			p->job->run_time,
+			p->job->wait_time,
+			timebuf,
+			"READY");
 	}else{
 		printf("NULL\n");
 	}
@@ -230,9 +244,9 @@ void jobswitch()
 	}
 
 //执行jobswitch后的信息
-#ifdef DEBUG_TASK9
+#ifdef DEBUG_LJL_TASK9
 	//当前进程信息
-	printf("After jobswitch, current:\n")
+	printf("After jobswitch, current:\n");
 	if(current){
 		printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
 		strcpy(timebuf,ctime(&(current->job->create_time)));
@@ -249,8 +263,9 @@ void jobswitch()
 	}
 
 	//当前等待队列信息
-	printf("After jobswitch, waitqueue:\n")
+	printf("After jobswitch, waitqueue:\n");
 	if(head){
+		printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
 		for(p=head;p!=NULL;p=p->next){
 			strcpy(timebuf,ctime(&(p->job->create_time)));
 			timebuf[strlen(timebuf)-1]='\0';
