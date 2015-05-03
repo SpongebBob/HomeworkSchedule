@@ -47,19 +47,19 @@ void scheduler()
 	switch(cmd.type){
 	case ENQ:
 		#ifdef DEBUG
-			printf("Excute enq!\n");
+			printf("Execut	e enq!\n");
 		#endif
 		do_enq(newjob,cmd);
 		break;
 	case DEQ:
 		#ifdef DEBUG
-			printf("Excute deq!\n");
+			printf("Execute deq!\n");
 		#endif
 		do_deq(cmd);
 		break;
 	case STAT:
 		#ifdef DEBUG
-			printf("Excute stat!\n");
+			printf("Execute stat!\n");
 		#endif
 		do_stat(cmd);
 		break;
