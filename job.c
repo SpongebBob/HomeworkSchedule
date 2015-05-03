@@ -75,7 +75,7 @@ void updateall()
 	/* 更新作业等待时间及优先级 */
 	for(p = head; p != NULL; p = p->next){
 		p->job->wait_time += 1000;
-		if(p->job->wait_time >= 5000 && p->job->curpri < 3){
+		if(p->job->wait_time >= 5000 ){ //threre is a bug ,if it is not high than 3,the data will stop at the first job;
 			p->job->curpri++;
 			p->job->wait_time = 0;
 		}
