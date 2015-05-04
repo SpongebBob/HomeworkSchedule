@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include "job.h"
 #define DEBUG
+//test
 /* 
  * ÃüÁîÓï·¨¸ñÊ½
  *     enq [-p num] e_file args
