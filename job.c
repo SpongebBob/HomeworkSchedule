@@ -39,12 +39,9 @@ void scheduler()
 #endif
 
 	/* 更新等待队列中的作业 */
-<<<<<<< HEAD
 	#ifdef DEBUG
 		printf("Update jobs in wait queue!\n");
 	#endif
-=======
->>>>>>> 5899d1e0f971c9257defa8fb38c426fd8567bda8
 	updateall();
 
 	switch(cmd.type){
@@ -89,6 +86,13 @@ int allocjid()
 
 void updateall()
 {
+	//updateall函数执行前队列查看
+	#ifdef DEBUG
+	printf("updateall function is starting!\n");
+		struct jobcmd statcmd;
+		do_stat(statcmd);
+    #endif
+	
 	struct waitqueue *p;
 
 	/* 更新作业运行时间 */
@@ -98,15 +102,17 @@ void updateall()
 	/* 更新作业等待时间及优先级 */
 	for(p = head; p != NULL; p = p->next){
 		p->job->wait_time += 1000;
-<<<<<<< HEAD
 		if(p->job->wait_time >= 5000){//there is a bug |fix it
-=======
-		if(p->job->wait_time >= 5000 ){ //threre is a bug ,if it is not high than 3,the data will stop at the first job;
->>>>>>> 5899d1e0f971c9257defa8fb38c426fd8567bda8
 			p->job->curpri++;
 			p->job->wait_time = 0;
 		}
 	}
+	
+	//updateall函数执行后队列查看
+	#ifdef DEBUG
+		printf("updateall function is finished.\n");
+		do_stat(statcmd);
+    #endif
 }
 
 struct waitqueue* jobselect()
