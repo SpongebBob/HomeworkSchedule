@@ -10,27 +10,31 @@
 #include <time.h>
 #include "job.h"
 
-#define DEBUG
-
 int jobid=0;
 int siginfo=1;
 int fifo;
 int globalfd;
+int siggoon = 0;
+int siggrasp = 0;
 
 struct waitqueue *head=NULL;
 struct waitqueue *next=NULL,*current =NULL;
 
-/* µ÷¶È³ÌĞò */
+void setsiggoon()
+{
+    siggoon = 1;
+}
+/* è°ƒåº¦ç¨‹åº */
 void scheduler()
 {
 	struct jobinfo *newjob=NULL;
 	struct jobcmd cmd;
 	int  count = 0;
+	//è¿™ä¸ªå‡½æ•°çš„ä½œç”¨æ˜¯ä»€ä¹ˆï¼ŸDATALENæ˜¯åœ¨job.hé‡Œå®šä¹‰ï¼Œä¸ºsizeof(struct jobcmd)
 	bzero(&cmd,DATALEN);
-	if((count=read(fifo,&cmd,DATALEN))<0)
+	if((count=read(fifo,&cmd,DATALEN))<0)//count åªæ˜¯ä¸ºäº†debugç”¨ï¼Ÿ
 		error_sys("read fifo failed");
 #ifdef DEBUG
-	printf("Reading whether other process send command!\n");
 	if(count){
 		printf("cmd cmdtype\t%d\ncmd defpri\t%d\ncmd data\t%s\n",cmd.type,cmd.defpri,cmd.data);
 	}
@@ -38,28 +42,33 @@ void scheduler()
 		printf("no data read\n");
 #endif
 
-	/* ¸üĞÂµÈ´ı¶ÓÁĞÖĞµÄ×÷Òµ */
-	#ifdef DEBUG
-		printf("Update jobs in wait queue!\n");
-	#endif
+	/* æ›´æ–°ç­‰å¾…é˜Ÿåˆ—ä¸­çš„ä½œä¸š */
 	updateall();
 
 	switch(cmd.type){
 	case ENQ:
-		#ifdef DEBUG
-			printf("Execute enq!\n");
+		#ifdef DEBUG_LJL_JOB
+			printf("In the 'ENQ' case\n");
 		#endif
 		do_enq(newjob,cmd);
+  		if(siggrasp)
+    	    {
+            next = jobselect();
+            jobswitch();
+            siggrasp = 0;
+            return;
+        }
 		break;
 	case DEQ:
-		#ifdef DEBUG
-			printf("Execute deq!\n");
+		#ifdef DEBUG_LJL_JOB
+			printf("In the 'DEQ' case\n");
 		#endif
 		do_deq(cmd);
+      
 		break;
 	case STAT:
-		#ifdef DEBUG
-			printf("Execute stat!\n");
+		#ifdef DEBUG_LJL_JOB
+			printf("In the 'STAT' case\n");
 		#endif
 		do_stat(cmd);
 		break;
@@ -67,17 +76,60 @@ void scheduler()
 		break;
 	}
 
-	#ifdef DEBUG
-		printf("Select which jobs to run next!\n");
-	#endif
-	/* Ñ¡Ôñ¸ßÓÅÏÈ¼¶×÷Òµ */
+    if(!canswitch()||!hasequalpri())
+    {
+        return;
+    }
+	/* é€‰æ‹©é«˜ä¼˜å…ˆçº§ä½œä¸š */
 	next=jobselect();
-	/* ×÷ÒµÇĞ»» */
-	#ifdef DEBUG
-		printf("Switch to the next job!\n");
+
+	#ifdef DEBUG_LJL_JOB
+		if(next)
+			printf("The selected job is %s\n",next->job->cmdarg[0]);
 	#endif
+	/* ä½œä¸šåˆ‡æ¢ */
 	jobswitch();
 }
+
+int hasequalpri(){
+	struct waitqueue *p;
+	int nowpri;
+	if(current==NULL)
+		return 1;
+	nowpri=current->job->curpri;
+	for(p=head;p!=NULL;p=p->next){
+		if(p->job->curpri>=nowpri)
+			return 1;
+	}
+	return 0;
+
+}
+
+
+int canswitch(){
+    
+    int t;
+    //has a higher pri,return 1;
+    if(current==NULL)
+        return 1;
+    
+    t=current->job->round_time;
+    //	printf("%d\n",t);
+    //	printf("%d\n",current->job->curpri);
+    // time to switch, need to go;
+    switch(current->job->curpri){
+        case 1:
+            return t>=5;
+        case 2:
+            return t>=2;
+        case 3:
+            return t>=1;
+        default:
+            return 1;
+    }
+    return 0;
+}
+
 
 int allocjid()
 {
@@ -86,34 +138,59 @@ int allocjid()
 
 void updateall()
 {
-	//updateallº¯ÊıÖ´ĞĞÇ°¶ÓÁĞ²é¿´
-	#ifdef DEBUG
-	printf("updateall function is starting!\n");
-		struct jobcmd statcmd;
-		do_stat(statcmd);
-    #endif
-	
-	struct waitqueue *p;
+	struct waitqueue *p,*temp;
 
-	/* ¸üĞÂ×÷ÒµÔËĞĞÊ±¼ä */
+	/* æ›´æ–°ä½œä¸šè¿è¡Œæ—¶é—´ */
 	if(current)
-		current->job->run_time += 1; /* ¼Ó1´ú±í1000ms */
-
-	/* ¸üĞÂ×÷ÒµµÈ´ıÊ±¼ä¼°ÓÅÏÈ¼¶ */
-	for(p = head; p != NULL; p = p->next){
-		p->job->wait_time += 1000;
-		if(p->job->wait_time >= 5000){//there is a bug |fix it
-			p->job->curpri++;
-			p->job->wait_time = 0;
-		}
+    	{
+        	current->job->round_time += 1;
+		current->job->run_time += 1; /* åŠ 1ä»£è¡¨1000ms */
+		printf("current_job_round_time=%d\n",current->job->round_time);
+		printf("current_job_pri=%d\n",current->job->curpri); 	   
 	}
-	
-	//updateallº¯ÊıÖ´ĞĞºó¶ÓÁĞ²é¿´
-	#ifdef DEBUG
-		printf("updateall function is finished.\n");
-		do_stat(statcmd);
-    #endif
+	/* æ›´æ–°ä½œä¸šç­‰å¾…æ—¶é—´åŠä¼˜å…ˆçº§ */
+    
+	for(p = head; p != NULL; ){
+		p->job->wait_time += 1000;
+		if(p->job->wait_time >= 10000 && p->job->curpri < 3){
+			//p->job->curpri++;
+			//p->job->wait_time = 0;
+            	temp = p->next;
+            	movejobtoend(p);
+            	p=temp;
+            	continue;
+		}
+	p = p->next;
+	}
 }
+/*because i has prothejob for i need to move to the end*/
+void movejobtoend(struct waitqueue *p){
+    struct waitqueue *pre=head;
+    struct waitqueue *q=head;
+    if(head==NULL)
+        return;
+    if(p->next==NULL){
+        p->job->curpri++;
+        p->job->wait_time=0;
+        return;
+    }
+    while(q!=p&&q!=NULL){
+        pre=q;
+        q=q->next;
+    }
+    if(pre==q)
+        head=head->next;
+    else
+        pre->next=q->next;
+    while(pre->next!=NULL)
+        pre=pre->next;
+    pre->next=p;
+    p->next=NULL;
+    p->job->curpri++;
+    p->job->wait_time = -1000;
+}
+
+
 
 struct waitqueue* jobselect()
 {
@@ -123,32 +200,92 @@ struct waitqueue* jobselect()
 	select = NULL;
 	selectprev = NULL;
 	if(head){
-		/* ±éÀúµÈ´ı¶ÓÁĞÖĞµÄ×÷Òµ£¬ÕÒµ½ÓÅÏÈ¼¶×î¸ßµÄ×÷Òµ */
-		for(prev = head, p = head; p != NULL; prev = p,p = p->next)
+		/* éå†ç­‰å¾…é˜Ÿåˆ—ä¸­çš„ä½œä¸šï¼Œæ‰¾åˆ°ä¼˜å…ˆçº§æœ€é«˜çš„ä½œä¸š */
+		for(prev = head, p = head; p != NULL; prev = p,p = p->next){
 			if(p->job->curpri > highest){
 				select = p;
 				selectprev = prev;
 				highest = p->job->curpri;
 			}
-			selectprev->next = select->next;
-			if (select == selectprev)	//Ö¤Ã÷µÈ´ı¶ÓÁĞÖĞÖ»ÓĞÒ»¸öÔªËØ
-				head = NULL;
+		}
+		selectprev->next = select->next;
+		//å½“å‰é€‰ä¸­çš„ä½œä¸šåº”è¯¥æ˜¯ç‹¬ç«‹çš„ï¼Œè¿™æ ·åœ¨æ”¾å…¥ç­‰å¾…é˜Ÿåˆ—æ—¶ä¸ä¼šå¼•èµ·ä½œä¸šä¸¢å¤±
+		//select->next = NULL;
+		if (select == selectprev)
+			//ç­‰å¾…é˜Ÿåˆ—ä¸­åªæœ‰å½“å‰ä¸€ä¸ªä½œä¸š
+			head = head->next;
 	}
 	return select;
 }
 
 void jobswitch()
 {
+	char timebuf[BUFLEN];
 	struct waitqueue *p;
 	int i;
 
-	if(current && current->job->state == DONE){ /* µ±Ç°×÷ÒµÍê³É */
-		/* ×÷ÒµÍê³É£¬É¾³ıËü */
+//æ‰§è¡Œjobswitchå‰çš„ä¿¡æ¯
+#ifdef DEBUG_LJL_TASK9
+	//å½“å‰è¿›ç¨‹ä¿¡æ¯
+	printf("Before jobswitch, current:\n");
+	if(current){
+		printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+		strcpy(timebuf,ctime(&(current->job->create_time)));
+		timebuf[strlen(timebuf)-1]='\0';
+		printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+			current->job->jid,
+			current->job->pid,
+			current->job->ownerid,
+			current->job->run_time,
+			current->job->wait_time,
+			timebuf,"RUNNING");
+	}else{
+		printf("NULL\n");
+	}
+
+	//å½“å‰ç­‰å¾…é˜Ÿåˆ—ä¿¡æ¯
+	printf("Before jobswitch, waitqueue:\n");
+	if(head){
+		printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+		for(p=head;p!=NULL;p=p->next){
+			strcpy(timebuf,ctime(&(p->job->create_time)));
+			timebuf[strlen(timebuf)-1]='\0';
+			printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+				p->job->jid,
+				p->job->pid,
+				p->job->ownerid,
+				p->job->run_time,
+				p->job->wait_time,
+				timebuf,
+				"READY");
+		}
+	}else if(next){
+		printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+		p = next;
+		strcpy(timebuf,ctime(&(p->job->create_time)));
+		timebuf[strlen(timebuf)-1]='\0';
+		printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+			p->job->jid,
+			p->job->pid,
+			p->job->ownerid,
+			p->job->run_time,
+			p->job->wait_time,
+			timebuf,
+			"READY");
+	}else{
+		printf("NULL\n");
+	}
+
+#endif
+
+
+	if(current && current->job->state == DONE){ /* å½“å‰ä½œä¸šå®Œæˆ */
+		/* ä½œä¸šå®Œæˆï¼Œåˆ é™¤å®ƒ */
 		for(i = 0;(current->job->cmdarg)[i] != NULL; i++){
 			free((current->job->cmdarg)[i]);
 			(current->job->cmdarg)[i] = NULL;
 		}
-		/* ÊÍ·Å¿Õ¼ä */
+		/* é‡Šæ”¾ç©ºé—´ */
 		free(current->job->cmdarg);
 		free(current->job);
 		free(current);
@@ -156,30 +293,41 @@ void jobswitch()
 		current = NULL;
 	}
 
-	if(next == NULL && current == NULL) /* Ã»ÓĞ×÷ÒµÒªÔËĞĞ */
-
+	if(next == NULL && current == NULL)
+	/* æ²¡æœ‰ä½œä¸šè¦è¿è¡Œ */
+	{
 		return;
-	else if (next != NULL && current == NULL){ /* ¿ªÊ¼ĞÂµÄ×÷Òµ */
-
-		printf("begin start new job\n");
+	}
+	else if (next != NULL && current == NULL){ 
+		/* å¼€å§‹æ–°çš„ä½œä¸š */
+		printf("start a new job\n");
 		current = next;
 		next = NULL;
 		current->job->state = RUNNING;
+        	current->job->round_time = 0;
 		kill(current->job->pid,SIGCONT);
 		return;
 	}
-	else if (next != NULL && current != NULL){ /* ÇĞ»»×÷Òµ */
-
+	else if (next != NULL && current != NULL){ 
+		/* åˆ‡æ¢ä½œä¸š */
 		printf("switch to Pid: %d\n",next->job->pid);
 		kill(current->job->pid,SIGSTOP);
 		current->job->curpri = current->job->defpri;
 		current->job->wait_time = 0;
+      		current->job->round_time = 0;
 		current->job->state = READY;
-
-		/* ·Å»ØµÈ´ı¶ÓÁĞ */
+		current->next = NULL;
+ 
+		/* æ”¾å›ç­‰å¾…é˜Ÿåˆ— */
+		//ä¸ºä»€ä¹ˆä¸ä¿®æ”¹currentçš„nextæŒ‡é’ˆï¼Ÿ
 		if(head){
-			for(p = head; p->next != NULL; p = p->next);
-			p->next = current;
+			for(p = head; p->next != NULL; p = p->next){
+				#ifdef DEBUG_LJL_JOB
+					printf("æ”¾å›ç­‰å¾…é˜Ÿåˆ—æ‰«æï¼š%d\n",p->job->jid);
+				#endif
+
+			}
+                p->next = current;
 		}else{
 			head = current;
 		}
@@ -189,38 +337,145 @@ void jobswitch()
 		current->job->wait_time = 0;
 		kill(current->job->pid,SIGCONT);
 		return;
-	}else{ /* next == NULLÇÒcurrent != NULL£¬²»ÇĞ»» */
+	}else{ /* next == NULLä¸”current != NULLï¼Œä¸åˆ‡æ¢ */
 		return;
 	}
+
+//æ‰§è¡Œjobswitchåçš„ä¿¡æ¯
+#ifdef DEBUG_LJL_TASK9
+	//å½“å‰è¿›ç¨‹ä¿¡æ¯
+	printf("After jobswitch, current:\n");
+	if(current){
+		printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+		strcpy(timebuf,ctime(&(current->job->create_time)));
+		timebuf[strlen(timebuf)-1]='\0';
+		printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+			current->job->jid,
+			current->job->pid,
+			current->job->ownerid,
+			current->job->run_time,
+			current->job->wait_time,
+			timebuf,"RUNNING");
+	}else{
+		printf("NULL\n");
+	}
+
+	//å½“å‰ç­‰å¾…é˜Ÿåˆ—ä¿¡æ¯
+	printf("After jobswitch, waitqueue:\n");
+	if(head){
+		printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+		for(p=head;p!=NULL;p=p->next){
+			strcpy(timebuf,ctime(&(p->job->create_time)));
+			timebuf[strlen(timebuf)-1]='\0';
+			printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+				p->job->jid,
+				p->job->pid,
+				p->job->ownerid,
+				p->job->run_time,
+				p->job->wait_time,
+				timebuf,
+				"READY");
+		}
+	}else{
+		printf("NULL\n");
+	}
+
+#endif
+
+	return ;
 }
 
 void sig_handler(int sig,siginfo_t *info,void *notused)
 {
 	int status;
 	int ret;
+#ifdef DEBUG_LJL_TASK10
+	char timebuf[BUFLEN];
+	struct waitqueue *p = NULL;
+#endif
 
 	switch (sig) {
-	case SIGVTALRM: /* µ½´ï¼ÆÊ±Æ÷ËùÉèÖÃµÄ¼ÆÊ±¼ä¸ô */
-		scheduler();
-		#ifdef DEBUG
-			printf("SIGVTALRM RECEIVED!\n");
-		#endif
-		return;
-	case SIGCHLD: /* ×Ó½ø³Ì½áÊøÊ±´«ËÍ¸ø¸¸½ø³ÌµÄĞÅºÅ */
-		ret = waitpid(-1,&status,WNOHANG);
-		if (ret == 0)
+		case SIGVTALRM: /* åˆ°è¾¾è®¡æ—¶å™¨æ‰€è®¾ç½®çš„è®¡æ—¶é—´éš” */
+			scheduler();
 			return;
-		if(WIFEXITED(status)){
-			current->job->state = DONE;
-			printf("normal termation, exit status = %d\n",WEXITSTATUS(status));
-		}else if (WIFSIGNALED(status)){
-			printf("abnormal termation, signal number = %d\n",WTERMSIG(status));
-		}else if (WIFSTOPPED(status)){
-			printf("child stopped, signal number = %d\n",WSTOPSIG(status));
-		}
-		return;
-	default:
-		return;
+		case SIGCHLD: /* å­è¿›ç¨‹ç»“æŸæ—¶ä¼ é€ç»™çˆ¶è¿›ç¨‹çš„ä¿¡å· */
+			ret = waitpid(-1,&status,WNOHANG);//WNOHANG è‹¥pidæŒ‡å®šçš„å­è¿›ç¨‹æ²¡æœ‰ç»“æŸï¼Œåˆ™waitpid()å‡½æ•°è¿”å›0ï¼Œä¸äºˆä»¥ç­‰å¾…ã€‚è‹¥ç»“æŸï¼Œåˆ™è¿”å›è¯¥å­è¿›ç¨‹çš„IDã€‚
+			if (ret == 0)//pidæŒ‡å®šçš„å­è¿›ç¨‹æ²¡æœ‰ç»“æŸ
+				return;
+			//WIFEXITEDï¼šå­è¿›ç¨‹æ­£å¸¸é€€å‡ºï¼ˆ"exit"æˆ–"_exit"ï¼‰ï¼Œæ­¤å®è¿”å›é0
+			//WEXITSTATUS(status)ï¼šå½“WIFEXITEDè¿”å›éé›¶å€¼æ—¶ï¼Œå¯ä»¥ç”¨è¿™ä¸ªå®æ¥æå–å­è¿›ç¨‹çš„è¿”å›å€¼
+			if(WIFEXITED(status)){
+				//å­è¿›ç¨‹æ­£å¸¸é€€å‡ºäº†
+				current->job->state = DONE;
+				printf("normal termation, exit status = %d\n",WEXITSTATUS(status));
+				//ä»»åŠ¡å
+				#ifdef DEBUG_LJL_TASK10
+					//å½“å‰è¿›ç¨‹ä¿¡æ¯
+					printf("Current:\n");
+					if(current){
+						printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+						strcpy(timebuf,ctime(&(current->job->create_time)));
+						timebuf[strlen(timebuf)-1]='\0';
+						printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+							current->job->jid,
+							current->job->pid,
+							current->job->ownerid,
+							current->job->run_time,
+							current->job->wait_time,
+							timebuf,"RUNNING");
+					}else{
+						printf("NULL\n");
+					}
+
+					//å½“å‰ç­‰å¾…é˜Ÿåˆ—ä¿¡æ¯
+					printf("Waitqueue:\n");
+					if(head){
+						printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+						for(p=head;p!=NULL;p=p->next){
+							strcpy(timebuf,ctime(&(p->job->create_time)));
+							timebuf[strlen(timebuf)-1]='\0';
+							printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+								p->job->jid,
+								p->job->pid,
+								p->job->ownerid,
+								p->job->run_time,
+								p->job->wait_time,
+								timebuf,
+								"READY");
+						}
+					}else if(next){
+						printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
+						p = next;
+						strcpy(timebuf,ctime(&(p->job->create_time)));
+						timebuf[strlen(timebuf)-1]='\0';
+						printf("%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+							p->job->jid,
+							p->job->pid,
+							p->job->ownerid,
+							p->job->run_time,
+							p->job->wait_time,
+							timebuf,
+							"READY");
+					}else{
+						printf("NULL\n");
+					}
+
+				#endif
+
+			//WIFSIGNALED(int status):å¦‚æœå­è¿›ç¨‹æ˜¯å› ä¸ºä¿¡å·è€Œç»“æŸåˆ™æ­¤å®å€¼ä¸ºçœŸ
+			//WTERMSIG(status)ï¼šå½“WIFSIGNALEDä¸ºçœŸæ—¶ï¼Œå¯ä»¥ç”¨è¿™ä¸ªå®æ¥å–å¾—å–å¾—å­è¿›ç¨‹å› ä¿¡å·è€Œä¸­æ­¢çš„ä¿¡å·ä»£ç 
+			}else if (WIFSIGNALED(status)){
+				//å­è¿›ç¨‹æ˜¯å› ä¸ºä¿¡å·è€Œç»“æŸ
+				printf("abnormal termation, signal number = %d\n",WTERMSIG(status));
+			//WIFSTOPPEDï¼šè‹¥ä¸ºå½“å‰æ­£å¤„äºæš‚åœçŠ¶æ€çš„å­è¿›ç¨‹è¿”å›çš„çŠ¶æ€ï¼Œåˆ™ä¸ºçœŸ
+			//WSTOPSIGï¼šå½“WIFSTOPPEDä¸ºçœŸæ—¶ï¼Œå¯é€šè¿‡è¿™ä¸ªå®æ¥å–å¾—ä½¿å­è¿›ç¨‹æš‚åœçš„ä¿¡å·ç¼–å·
+			}else if (WIFSTOPPED(status)){
+				//å­è¿›ç¨‹å½“å‰æ­£å¤„äºæš‚åœçŠ¶æ€
+				printf("child stopped, signal number = %d\n",WSTOPSIG(status));
+			}
+			return;
+			default:
+				return;
 	}
 }
 
@@ -234,7 +489,7 @@ void do_enq(struct jobinfo *newjob,struct jobcmd enqcmd)
 
 	sigemptyset(&zeromask);
 
-	/* ·â×°jobinfoÊı¾İ½á¹¹ */
+	/* å°è£…jobinfoæ•°æ®ç»“æ„ */
 	newjob = (struct jobinfo *)malloc(sizeof(struct jobinfo));
 	newjob->jid = allocjid();
 	newjob->defpri = enqcmd.defpri;
@@ -244,6 +499,7 @@ void do_enq(struct jobinfo *newjob,struct jobcmd enqcmd)
 	newjob->create_time = time(NULL);
 	newjob->wait_time = 0;
 	newjob->run_time = 0;
+    newjob->round_time = 0;
 	arglist = (char**)malloc(sizeof(char*)*(enqcmd.argnum+1));
 	newjob->cmdarg = arglist;
 	offset = enqcmd.data;
@@ -258,6 +514,9 @@ void do_enq(struct jobinfo *newjob,struct jobcmd enqcmd)
 		}else
 			offset++;
 	}
+    if(current!=NULL&&newjob->curpri>current->job->curpri){
+        siggrasp=1;
+    }
 
 	arglist[i] = NULL;
 
@@ -269,7 +528,7 @@ void do_enq(struct jobinfo *newjob,struct jobcmd enqcmd)
 
 #endif
 
-	/*ÏòµÈ´ı¶ÓÁĞÖĞÔö¼ÓĞÂµÄ×÷Òµ*/
+	/*å‘ç­‰å¾…é˜Ÿåˆ—ä¸­å¢åŠ æ–°çš„ä½œä¸š*/
 	newnode = (struct waitqueue*)malloc(sizeof(struct waitqueue));
 	newnode->next =NULL;
 	newnode->job=newjob;
@@ -281,13 +540,14 @@ void do_enq(struct jobinfo *newjob,struct jobcmd enqcmd)
 	}else
 		head=newnode;
 
-	/*Îª×÷Òµ´´½¨½ø³Ì*/
+	/*ä¸ºä½œä¸šåˆ›å»ºè¿›ç¨‹*/
 	if((pid=fork())<0)
 		error_sys("enq fork failed");
 
 	if(pid==0){
 		newjob->pid =getpid();
-		/*×èÈû×Ó½ø³Ì,µÈµÈÖ´ĞĞ*/
+		/*é˜»å¡å­è¿›ç¨‹,ç­‰ç­‰æ‰§è¡Œ*/
+        kill(getppid(),SIGUSR1);
 		raise(SIGSTOP);
 #ifdef DEBUG
 
@@ -296,13 +556,18 @@ void do_enq(struct jobinfo *newjob,struct jobcmd enqcmd)
 			printf("arglist %s\n",arglist[i]);
 #endif
 
-		/*¸´ÖÆÎÄ¼şÃèÊö·ûµ½±ê×¼Êä³ö*/
+		/*å¤åˆ¶æ–‡ä»¶æè¿°ç¬¦åˆ°æ ‡å‡†è¾“å‡º*/
 		dup2(globalfd,1);
-		/* Ö´ĞĞÃüÁî */
+		/* æ‰§è¡Œå‘½ä»¤ */
 		if(execv(arglist[0],arglist)<0)
 			printf("exec failed\n");
 		exit(1);
 	}else{
+        signal(SIGUSR1,setsiggoon);
+        while(siggoon==0){
+
+        }
+        siggoon=0;
 		newjob->pid=pid;
 	}
 }
@@ -317,7 +582,7 @@ void do_deq(struct jobcmd deqcmd)
 	printf("deq jid %d\n",deqid);
 #endif
 
-	/*current jodid==deqid,ÖÕÖ¹µ±Ç°×÷Òµ*/
+	/*current jodid==deqid,ç»ˆæ­¢å½“å‰ä½œä¸š*/
 	if (current && current->job->jid ==deqid){
 		printf("teminate current job\n");
 		kill(current->job->pid,SIGKILL);
@@ -330,20 +595,34 @@ void do_deq(struct jobcmd deqcmd)
 		free(current);
 		current=NULL;
 	}
-	else{ /* »òÕßÔÚµÈ´ı¶ÓÁĞÖĞ²éÕÒdeqid */
+	else{ /* æˆ–è€…åœ¨ç­‰å¾…é˜Ÿåˆ—ä¸­æŸ¥æ‰¾deqid */
+		#ifdef DEBUG_LJL_DEQ
+			printf("Task to delete is not current task\n");
+		#endif
 		select=NULL;
 		selectprev=NULL;
-		if(head){
-			for(prev=head,p=head;p!=NULL;prev=p,p=p->next)
-				if(p->job->jid==deqid){
-					select=p;
-					selectprev=prev;
-					break;
-				}
-				selectprev->next=select->next;
-				if(select==selectprev)
-					head=NULL;
-		}
+		
+        if(head){
+            for(prev=head,p=head;p!=NULL;prev=p,p=p->next)
+                if(p->job->jid==deqid){
+                    select=p;
+                    selectprev=prev;
+                    break;
+                }
+            if(select==NULL){
+                #ifdef DEBUG_LJL_DEQ
+                printf("can't find this job :%d\n",deqid);
+                #endif
+                return;
+            }
+            else if(select==head)
+                head=head->next;
+            else{
+                selectprev->next=select->next;
+            }
+        }
+        
+
 		if(select){
 			for(i=0;(select->job->cmdarg)[i]!=NULL;i++){
 				free((select->job->cmdarg)[i]);
@@ -362,17 +641,40 @@ void do_stat(struct jobcmd statcmd)
 	struct waitqueue *p;
 	char timebuf[BUFLEN];
 	/*
-	*´òÓ¡ËùÓĞ×÷ÒµµÄÍ³¼ÆĞÅÏ¢:
-	*1.×÷ÒµID
-	*2.½ø³ÌID
-	*3.×÷ÒµËùÓĞÕß
-	*4.×÷ÒµÔËĞĞÊ±¼ä
-	*5.×÷ÒµµÈ´ıÊ±¼ä
-	*6.×÷Òµ´´½¨Ê±¼ä
-	*7.×÷Òµ×´Ì¬
+	*æ‰“å°æ‰€æœ‰ä½œä¸šçš„ç»Ÿè®¡ä¿¡æ¯:
+	*1.ä½œä¸šID
+	*2.è¿›ç¨‹ID
+	*3.ä½œä¸šæ‰€æœ‰è€…
+	*4.ä½œä¸šè¿è¡Œæ—¶é—´
+	*5.ä½œä¸šç­‰å¾…æ—¶é—´
+	*6.ä½œä¸šåˆ›å»ºæ—¶é—´
+	*7.ä½œä¸šçŠ¶æ€
 	*/
 
-	/* ´òÓ¡ĞÅÏ¢Í·²¿ */
+	/* æ‰“å°ä¿¡æ¯å¤´éƒ¨ */
+#ifdef DEBUG_LJL_STAT
+	printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCURPRI\tSTATE\n");
+	if(current){
+		printf("%d\t%d\t%d\t%d\t%d\t\t%d\t%s\n",
+			current->job->jid,
+			current->job->pid,
+			current->job->ownerid,
+			current->job->run_time,
+			current->job->wait_time,
+			current->job->curpri,
+			"RUNNING");
+	}
+	for(p=head;p!=NULL;p=p->next){
+		printf("%d\t%d\t%d\t%d\t%d\t\t%d\t%s\n",
+			p->job->jid,
+			p->job->pid,
+			p->job->ownerid,
+			p->job->run_time,
+			p->job->wait_time,
+			p->job->curpri,
+			"READY");
+	}
+#else
 	printf("JOBID\tPID\tOWNER\tRUNTIME\tWAITTIME\tCREATTIME\t\tSTATE\n");
 	if(current){
 		strcpy(timebuf,ctime(&(current->job->create_time)));
@@ -385,7 +687,6 @@ void do_stat(struct jobcmd statcmd)
 			current->job->wait_time,
 			timebuf,"RUNNING");
 	}
-
 	for(p=head;p!=NULL;p=p->next){
 		strcpy(timebuf,ctime(&(p->job->create_time)));
 		timebuf[strlen(timebuf)-1]='\0';
@@ -398,6 +699,7 @@ void do_stat(struct jobcmd statcmd)
 			timebuf,
 			"READY");
 	}
+#endif
 }
 
 int main()
@@ -407,30 +709,26 @@ int main()
 	struct stat statbuf;
 	struct sigaction newact,oldact1,oldact2;
 
-	#ifdef DEBUG
-		printf("DEBUG IS OPEN!\n");
-	#endif
-
 	if(stat("/tmp/server",&statbuf)==0){
-		/* Èç¹ûFIFOÎÄ¼ş´æÔÚ,É¾µô */
+		/* å¦‚æœFIFOæ–‡ä»¶å­˜åœ¨,åˆ æ‰ */
 		if(remove("/tmp/server")<0)
 			error_sys("remove failed");
 	}
 
 	if(mkfifo("/tmp/server",0666)<0)
 		error_sys("mkfifo failed");
-	/* ÔÚ·Ç×èÈûÄ£Ê½ÏÂ´ò¿ªFIFO */
+	/* åœ¨éé˜»å¡æ¨¡å¼ä¸‹æ‰“å¼€FIFO */
 	if((fifo=open("/tmp/server",O_RDONLY|O_NONBLOCK))<0)
 		error_sys("open fifo failed");
 
-	/* ½¨Á¢ĞÅºÅ´¦Àíº¯Êı */
+	/* å»ºç«‹ä¿¡å·å¤„ç†å‡½æ•° */
 	newact.sa_sigaction=sig_handler;
 	sigemptyset(&newact.sa_mask);
 	newact.sa_flags=SA_SIGINFO;
 	sigaction(SIGCHLD,&newact,&oldact1);
 	sigaction(SIGVTALRM,&newact,&oldact2);
 
-	/* ÉèÖÃÊ±¼ä¼ä¸ôÎª1000ºÁÃë */
+	/* è®¾ç½®æ—¶é—´é—´éš”ä¸º1000æ¯«ç§’ */
 	interval.tv_sec=1;
 	interval.tv_usec=0;
 

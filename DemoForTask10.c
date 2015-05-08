@@ -10,10 +10,10 @@ void main()
   while(1)
   {
      time(&timerc);
-     if((timerc-timer)>=1)//每过1秒打印
+     if((timerc-timer)>=10)//每过1秒打印
      {
-     //  printf("程序经过%d秒\n",count++);
-       timer=timerc;
+       printf("程序经过10秒\n");
+		return ;
      }
   }
   

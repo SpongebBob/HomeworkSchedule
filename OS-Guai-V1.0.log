@@ -1,0 +1,6 @@
+The edit was signed with a mark like this:
+////////Guai///////////
+
+1 struct waitqueue* jobselect() added Function Printf() Line [140-156]
+2 do_enq & do_deq added Function Printf() Line [349-355] [398-404] [335-341] [256-262]
+3 scheduler's do_stat added Function Printf() Line [61-68]
